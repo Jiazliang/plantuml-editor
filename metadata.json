@@ -1,0 +1,5 @@
+{
+  "name": "PlantUML Editor",
+  "description": "实时 PlantUML 编辑器和预览工具。",
+  "requestFramePermissions": []
+}
