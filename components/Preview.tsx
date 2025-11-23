@@ -1,6 +1,9 @@
 
 import React, { useState } from 'react';
 
+// Safely import electron if available
+const electron = (window as any).require ? (window as any).require('electron') : null;
+
 interface PreviewProps {
   imageUrl: string;
   isLoading: boolean;
@@ -16,7 +19,7 @@ const Preview: React.FC<PreviewProps> = ({ imageUrl, isLoading }) => {
 
   const [imgError, setImgError] = useState(false);
   const [svgContent, setSvgContent] = useState<string | null>(null);
-  const [svgCopied, setSvgCopied] = useState(false);
+  const [copied, setCopied] = useState(false);
   
   // Zoom and Pan State
   const [scale, setScale] = useState(1);
@@ -31,7 +34,7 @@ const Preview: React.FC<PreviewProps> = ({ imageUrl, isLoading }) => {
     setIsImageLoading(!!imageUrl);
     setImgError(false);
     setSvgContent(null);
-    setSvgCopied(false);
+    setCopied(false);
     setScale(1);
     setPosition({ x: 0, y: 0 });
   }
@@ -73,20 +76,85 @@ const Preview: React.FC<PreviewProps> = ({ imageUrl, isLoading }) => {
     }
   };
 
-  const handleCopySVG = async () => {
+  const handleCopyPNG = async () => {
       try {
-          const response = await fetch(imageUrl);
-          if (!response.ok) throw new Error("Failed to fetch");
-          const blob = await response.blob();
-          const svgBlob = new Blob([blob], { type: 'image/svg+xml' });
-          const item = new ClipboardItem({ 'image/svg+xml': svgBlob });
-          await navigator.clipboard.write([item]);
+          // 1. Get SVG content
+          let text = svgContent;
+          if (!text && imageUrl) {
+             const response = await fetch(imageUrl);
+             if (!response.ok) throw new Error("Failed to fetch");
+             text = await response.text();
+          }
 
-          setSvgCopied(true);
-          setTimeout(() => setSvgCopied(false), 2000);
+          if (!text) throw new Error("No SVG content found");
+
+          // 2. Convert SVG string to Image
+          const img = new Image();
+          // Handling Unicode in SVG for Base64 safely
+          const svg64 = btoa(unescape(encodeURIComponent(text)));
+          const b64Start = 'data:image/svg+xml;base64,';
+          const image64 = b64Start + svg64;
+
+          img.onload = () => {
+              const canvas = document.createElement('canvas');
+              // Increase scale for better quality (e.g. 2x)
+              const scaleFactor = 2;
+              canvas.width = img.width * scaleFactor;
+              canvas.height = img.height * scaleFactor;
+              
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return;
+              
+              // Fill white background to handle transparency
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              
+              ctx.scale(scaleFactor, scaleFactor);
+              ctx.drawImage(img, 0, 0);
+
+              if (electron) {
+                  // Electron: Use nativeImage
+                  try {
+                      const dataURL = canvas.toDataURL('image/png');
+                      const nativeImage = electron.nativeImage.createFromDataURL(dataURL);
+                      electron.clipboard.writeImage(nativeImage);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                  } catch (e) {
+                      console.error("Electron copy failed", e);
+                      alert("复制失败");
+                  }
+              } else {
+                  // Web: Use Clipboard API
+                  canvas.toBlob(async (blob) => {
+                      if (!blob) {
+                          alert("生成图片失败");
+                          return;
+                      }
+                      try {
+                          await navigator.clipboard.write([
+                              new ClipboardItem({ 'image/png': blob })
+                          ]);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                      } catch (err) {
+                          console.error("Web copy failed", err);
+                          alert("复制失败: 您的浏览器可能不支持直接写入 PNG 图片到剪贴板。");
+                      }
+                  }, 'image/png');
+              }
+          };
+
+          img.onerror = (e) => {
+              console.error("SVG Image load failed", e);
+              alert("无法转换 SVG 为 PNG。");
+          };
+
+          img.src = image64;
+
       } catch (e) {
-          console.error("Copy failed", e);
-          alert("复制失败。您的浏览器可能不支持直接复制 SVG 格式，请尝试下载文件。");
+          console.error("Copy preparation failed", e);
+          alert("复制失败：无法获取图片数据。");
       }
   };
 
@@ -170,24 +238,24 @@ const Preview: React.FC<PreviewProps> = ({ imageUrl, isLoading }) => {
         
         <div className="flex items-center gap-2">
             <button
-                onClick={handleCopySVG}
+                onClick={handleCopyPNG}
                 disabled={showLoading || (!imageUrl && !svgContent)}
                 className="text-xs flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white px-2 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="复制 SVG 图片到剪贴板"
+                title="复制 PNG 图片 (适合粘贴到文档/微信)"
             >
-                {svgCopied ? (
+                {copied ? (
                     <>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-green-400">
                              <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
                         </svg>
-                        <span className="text-green-400">已复制</span>
+                        <span className="text-green-400">已复制 PNG</span>
                     </>
                 ) : (
                     <>
                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
                             <path fillRule="evenodd" d="M13.887 3.182c.396.037.79.08 1.183.128C16.194 3.45 17 4.414 17 5.517V16.75A2.25 2.25 0 0114.75 19h-9.5A2.25 2.25 0 013 16.75V5.517c0-1.103.806-2.068 1.93-2.207.393-.048.787-.09 1.183-.128A3.001 3.001 0 019 1h2c1.373 0 2.531.923 2.887 2.182zM7.5 4A1.5 1.5 0 019 2.5h2A1.5 1.5 0 0112.5 4v.5h-5V4z" clipRule="evenodd" />
                          </svg>
-                         <span>复制 SVG</span>
+                         <span>复制 PNG 图片</span>
                     </>
                 )}
             </button>
@@ -196,12 +264,13 @@ const Preview: React.FC<PreviewProps> = ({ imageUrl, isLoading }) => {
                 onClick={handleDownload}
                 disabled={showLoading || (!imageUrl && !svgContent)}
                 className="text-xs flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="下载 SVG 代码"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
                     <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.965 3.129V2.75z" />
                     <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
                 </svg>
-                下载
+                下载 SVG 代码
             </button>
         </div>
       </div>
