@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { encodePlantUML, INITIAL_CODE, checkSyntaxError, DEFAULT_SERVER_URL } from './utils/plantuml';
 import CodeEditor from './components/CodeEditor';
@@ -34,10 +33,10 @@ const App: React.FC = () => {
   const [syntaxErrorLine, setSyntaxErrorLine] = useState<number | null>(null);
 
   // Server URL Management
-  const [serverUrl, setServerUrl] = useState<string>(() => {
-      return localStorage.getItem('plantuml_server_url') || DEFAULT_SERVER_URL;
-  });
+  // Initial state is empty until the backend confirms the port
+  const [serverUrl, setServerUrl] = useState<string>('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [serverStatusMessage, setServerStatusMessage] = useState<string>('');
 
   // Resizable Split Pane State
   const [leftWidth, setLeftWidth] = useState(32); // Percentage - Optimized for compact toolbar
@@ -86,34 +85,38 @@ const App: React.FC = () => {
     }
   }, [historyIndex, history.length]);
 
-  // Persist serverUrl
-  useEffect(() => {
-      localStorage.setItem('plantuml_server_url', serverUrl);
-  }, [serverUrl]);
-
   // =========================================================
   // Local Server Lifecycle Management
   // =========================================================
 
-  // 1. Auto-start local server on app launch if previously selected
   useEffect(() => {
-    if (ipcRenderer && serverUrl.includes('localhost')) {
-        const match = serverUrl.match(/:(\d+)/);
-        if (match) {
-            const port = parseInt(match[1], 10);
-            console.log("[App] Auto-starting local server on port", port);
-            ipcRenderer.send('start-local-server', port);
-        }
-    }
-  }, []); // Empty dependency: Run once on mount
+    if (!ipcRenderer) return;
 
-  // 2. Ensure local server is stopped when switching to remote
-  useEffect(() => {
-      if (ipcRenderer && !serverUrl.includes('localhost')) {
-          console.log("[App] Switched to remote, stopping local server");
-          ipcRenderer.send('stop-local-server');
+    // Listen for server status updates
+    const handleStatus = (event: any, status: { success: boolean, port?: number, error?: string }) => {
+      if (status.success && status.port) {
+        const url = `http://localhost:${status.port}`;
+        console.log(`[App] Server started at ${url}`);
+        setServerUrl(url);
+        setServerStatusMessage(`本地服务运行中 (端口: ${status.port})`);
+      } else {
+        console.error(`[App] Server start failed: ${status.error}`);
+        setServerStatusMessage(`启动失败: ${status.error}`);
+        // If auto-start fails, open settings so user can pick a port
+        setIsSettingsOpen(true);
       }
-  }, [serverUrl]);
+    };
+
+    ipcRenderer.on('local-server-status', handleStatus);
+
+    // Initial Auto-Start: Send without port to trigger auto-scan (8080-8090)
+    console.log("[App] Requesting auto-start for local server...");
+    ipcRenderer.send('start-local-server'); // No arguments = auto scan
+
+    return () => {
+      ipcRenderer.removeAllListeners('local-server-status');
+    };
+  }, []); 
 
   // =========================================================
 
@@ -153,7 +156,8 @@ const App: React.FC = () => {
 
   // Synchronously calculate URL to avoid "Loading=false but URL=old" gap
   const generatedUrl = useMemo(() => {
-    if (!debouncedCode.trim()) return '';
+    // Wait until we have a valid server URL
+    if (!debouncedCode.trim() || !serverUrl) return '';
     return encodePlantUML(debouncedCode, serverUrl);
   }, [debouncedCode, serverUrl]);
 
@@ -202,12 +206,15 @@ const App: React.FC = () => {
           </h1>
         </div>
         <div className="flex items-center space-x-4 text-sm">
-          <a href="https://plantuml.com/" target="_blank" rel="noreferrer" className="text-slate-400 hover:text-brand-400 transition-colors hidden sm:inline">文档</a>
-          
+          {/* Status Text */}
+          <span className={`text-xs ${serverUrl ? 'text-green-500' : 'text-yellow-500'} hidden md:inline-block`}>
+             {serverUrl ? '● 已连接本地服务' : '● 正在连接服务...'}
+          </span>
+
           <button 
             onClick={() => setIsSettingsOpen(true)}
             className="text-slate-400 hover:text-white transition-colors p-1.5 rounded-full hover:bg-slate-800"
-            title="设置服务器地址"
+            title="配置本地端口"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
                 <path fillRule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.042 7.042 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
@@ -270,6 +277,7 @@ const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         currentUrl={serverUrl}
         onSave={setServerUrl}
+        initialError={serverStatusMessage}
       />
     </div>
   );

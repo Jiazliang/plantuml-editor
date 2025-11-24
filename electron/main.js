@@ -4,6 +4,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const url = require('url');
 const fs = require('fs');
+const net = require('net');
 
 let mainWindow;
 let localServer = null;
@@ -214,26 +215,32 @@ app.on('will-quit', () => {
 });
 
 // ==========================================
-// Local HTTP Server (Proxy to Persistent Java)
+// Local HTTP Server Logic
 // ==========================================
 
-ipcMain.on('start-local-server', (event, port) => {
-  // Stop existing HTTP server
-  if (localServer) {
-    localServer.close();
-    localServer = null;
-  }
+// Helper: Try to listen on a port. Returns Promise that resolves if successful, rejects if occupied.
+const tryListen = (server, port) => {
+  return new Promise((resolve, reject) => {
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        reject(err);
+      } else {
+        // Other errors are fatal
+        reject(err);
+      }
+    });
+    
+    server.once('listening', () => {
+      server.removeAllListeners('error'); // Remove the error listener
+      resolve(port);
+    });
 
-  // Pre-start the Java process to warm it up
-  try {
-    plantUmlService.start();
-  } catch (err) {
-    event.reply('local-server-status', { success: false, error: err.message });
-    return;
-  }
+    server.listen(port, '127.0.0.1');
+  });
+};
 
-  try {
-    localServer = http.createServer(async (req, res) => {
+const createServerInstance = (event) => {
+    const server = http.createServer(async (req, res) => {
       // CORS & Headers
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -277,17 +284,69 @@ ipcMain.on('start-local-server', (event, port) => {
       }
     });
 
-    localServer.on('error', (e) => {
-      event.reply('local-server-status', { success: false, error: e.message });
+    server.on('error', (e) => {
+        // Logic handled in tryListen usually, but global error handler just in case
+        console.error("Global Server Error:", e);
     });
 
-    localServer.listen(port, () => {
-      console.log(`Local PlantUML server started on port ${port}`);
-      event.reply('local-server-status', { success: true, port: port });
-    });
+    return server;
+}
 
+ipcMain.on('start-local-server', async (event, specificPort = null) => {
+  // Stop existing HTTP server
+  if (localServer) {
+    localServer.close();
+    localServer = null;
+  }
+
+  // Pre-start the Java process
+  try {
+    plantUmlService.start();
   } catch (err) {
     event.reply('local-server-status', { success: false, error: err.message });
+    return;
+  }
+
+  // Determine port strategy
+  const startPort = 8080;
+  const endPort = 8090;
+
+  if (specificPort) {
+      // Manual Mode: Try specific port only
+      localServer = createServerInstance(event);
+      try {
+          await tryListen(localServer, specificPort);
+          console.log(`Local PlantUML server started on manual port ${specificPort}`);
+          event.reply('local-server-status', { success: true, port: specificPort });
+      } catch (e) {
+          event.reply('local-server-status', { success: false, error: `端口 ${specificPort} 被占用，请尝试其他端口。` });
+          localServer = null;
+      }
+  } else {
+      // Auto Mode: Scan 8080 -> 8090
+      let currentPort = startPort;
+      let started = false;
+
+      while (currentPort <= endPort && !started) {
+          localServer = createServerInstance(event);
+          try {
+              await tryListen(localServer, currentPort);
+              started = true;
+              console.log(`Local PlantUML server started on auto-detected port ${currentPort}`);
+              event.reply('local-server-status', { success: true, port: currentPort });
+          } catch (e) {
+              console.log(`Port ${currentPort} is busy, trying next...`);
+              localServer = null; // Clean up failed instance
+              currentPort++;
+          }
+      }
+
+      if (!started) {
+          event.reply('local-server-status', { 
+              success: false, 
+              error: `端口 ${startPort}-${endPort} 均被占用。请手动指定一个端口。` 
+          });
+      }
   }
 });
 

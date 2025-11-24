@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { TEMPLATES } from '../utils/templates';
 import { PUML_THEMES, applyThemeToCode, detectTheme } from '../utils/themes';
@@ -499,7 +498,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         
         {/* Left Group: Settings/Selectors */}
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar mask-fade-right">
-          <span className="text-xs font-medium text-slate-400 uppercase tracking-wider hidden md:inline-block mr-1">编辑器</span>
+          <span className="text-xs font-medium text-slate-400 uppercase tracking-wider shrink-0 whitespace-nowrap hidden md:inline-block mr-1">编辑器</span>
           
           {/* Template Selector */}
           <div className="relative group shrink-0">

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 
 // Safely import electron if available
@@ -276,7 +275,7 @@ const Preview: React.FC<PreviewProps> = ({ imageUrl, isLoading }) => {
       </div>
 
       <div 
-        className={`flex-1 overflow-hidden flex items-center justify-center p-8 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-fixed ${
+        className={`flex-1 overflow-hidden flex items-center justify-center p-8 bg-slate-950 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px] ${
              imageUrl ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : ''
         }`}
         onMouseDown={imageUrl ? handleMouseDown : undefined}
